@@ -3,65 +3,63 @@ from datetime import datetime
 from tkinter import messagebox
 from getrecord import fetch_by_id
 
-# コピーしてSlack形式に整形してクリップボードに保存
-def copy_to_slack(root, record_id):
+def _get_formatted_data(record_id):
     record = fetch_by_id(record_id)
     if not record:
         messagebox.showerror("エラー", "対象のデータが見つかりません")
-        return
-
+        return None, None
     try:
         meta = json.loads(record.get('meta_json', '{}'))
     except (json.JSONDecodeError, TypeError):
         meta = {}
+    return record, meta
 
-    # typeカラムの値で判別
+def _build_lines(record, meta, style):
     rec_type = record.get('type')
     lines = []
-
-    if rec_type == "standup":  # 日報
-        raw_date = meta.get('date')
-        if not raw_date:
-            report_date = datetime.now().strftime('%Y-%m-%d')
-        else:
-            report_date = raw_date
-
-        lines.extend([
-            "*【日報】*",
-            f"・日付: {report_date}",
-            f"・昨日やったこと: {meta.get('done', 'なし')}",
-            f"・今日やること: {meta.get('today', 'なし')}",
-            f"・困りごと: {meta.get('blocker', 'なし')}",
-            f"・チケット番号: {meta.get('ticket', 'なし')}"
-        ])
     
-    elif rec_type == "handover":  # 引継ぎ
-        lines.extend([
-            "*【引継ぎ】*",
-            f"・タイトル: {record.get('title', 'なし')}",
-            f"・背景: {meta.get('context', 'なし')}",
-            f"・現状: {meta.get('current', 'なし')}",
-            f"・次アクション: {meta.get('next', 'なし')}",
-            f"・注意点: {meta.get('notes', 'なし')}",
-            f"・参考リンク: {meta.get('links', 'なし')}"
-        ])
+    # スタイル定義 (太字開始, 太字終了, リスト記号)
+    styles = {
+        "slack":  ("*", "*", "・"),
+        "jira":   ("", "", "・"),
+        "notion": ("**", "**", "- ")
+    }
+    b_s, b_e, l_p = styles.get(style)
 
-    elif rec_type == "incident":  # 障害/問い合わせ
-        lines.extend([
-            "*【障害/問い合わせ報告】*",
-            f"・現象: {meta.get('summary', 'なし')}",
-            f"・影響範囲: {meta.get('impact', 'なし')}",
-            f"・環境: {meta.get('env', 'なし')}",
-            f"・再現手順: {meta.get('repro_steps', 'なし')}",
-            f"・確認済みログ: {meta.get('logs_checked', 'なし')}",
-            f"・仮説: {meta.get('hypothesis', 'なし')}"
-        ])
+    if rec_type == "standup":
+        date = meta.get('date') or datetime.now().strftime('%Y-%m-%d')
+        lines.append("### 🗓️ 日報" if style == "notion" else f"{b_s}【日報】{b_e}")
+        items = [("日付", date), ("昨日やったこと", meta.get('done')), ("今日やること", meta.get('today')), ("困りごと", meta.get('blocker')), ("チケット番号", meta.get('ticket'))]
+    
+    elif rec_type == "handover":
+        lines.append("### 引継ぎ" if style == "notion" else f"{b_s}【引継ぎ】{b_e}")
+        items = [("タイトル", record.get('title')), ("背景", meta.get('context')), ("現状", meta.get('current')), ("次アクション", meta.get('next')), ("注意点", meta.get('notes')), ("参考リンク", meta.get('links'))]
+    
+    elif rec_type == "incident":
+        lines.append("### 障害/問い合わせ報告" if style == "notion" else f"{b_s}【障害/問い合わせ報告】{b_e}")
+        items = [("現象", meta.get('summary')), ("影響範囲", meta.get('impact')), ("環境", meta.get('env')), ("再現手順", meta.get('repro_steps')), ("確認済みログ", meta.get('logs_checked')), ("仮説", meta.get('hypothesis'))]
     
     else:
-        lines.append(f"*{rec_type}*\n{record.get('body', '内容なし')}")
+        return [f"{b_s}{rec_type}{b_e}", record.get('body', '内容なし')]
 
-    # 整形してコピー
-    formatted_text = "\n".join(lines)
+    for label, value in items:
+        lines.append(f"{l_p}{b_s}{label}:{b_e} {value or 'なし'}")
+    
+    return lines
+
+def _copy_to_clipboard(root, lines, msg):
     root.clipboard_clear()
-    root.clipboard_append(formatted_text)
-    messagebox.showinfo("完了", f"Slack形式でコピーしました")
+    root.clipboard_append("\n".join(lines))
+    messagebox.showinfo("完了", msg)
+
+def copy_to_slack(root, record_id):
+    res = _get_formatted_data(record_id)
+    if res[0]: _copy_to_clipboard(root, _build_lines(res[0], res[1], "slack"), "Slack形式でコピーしました")
+
+def copy_to_jira(root, record_id):
+    res = _get_formatted_data(record_id)
+    if res[0]: _copy_to_clipboard(root, _build_lines(res[0], res[1], "jira"), "Jira形式でコピーしました")
+
+def copy_to_notion(root, record_id):
+    res = _get_formatted_data(record_id)
+    if res[0]: _copy_to_clipboard(root, _build_lines(res[0], res[1], "notion"), "Notion形式でコピーしました")
